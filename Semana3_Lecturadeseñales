@@ -1,0 +1,62 @@
+# Importar bibliotecas 
+import numpy as np 
+import matplotlib.pyplot as plt 
+from scipy.io import loadmat 
+ 
+plt.close("all") 
+ 
+# Rutas de los archivos 
+direccion_ECG = "D:/SERVICIO SOCIAL/REDES NEURONALES/DatosPaciente/files/i
+care/2.0/training/0320/0320_003_018_ECG.mat" 
+direccion_EEG = "D:/SERVICIO SOCIAL/REDES NEURONALES/DatosPaciente/files/i
+care/2.0/training/0320/0320_003_018_EEG.mat" 
+direccion_Head_ECG = "D:/SERVICIO SOCIAL/REDES 
+NEURONALES/DatosPaciente/files/i
+care/2.0/training/0320/0320_003_018_ECG.hea" 
+direccion_Head_EEG = "D:/SERVICIO SOCIAL/REDES 
+NEURONALES/DatosPaciente/files/i
+care/2.0/training/0320/0320_003_018_EEG.hea" 
+direccion_TXT = ("D:/SERVICIO SOCIAL/REDES NEURONALES/DatosPaciente/files/i
+care/2.0/training/0320/0320.txt") 
+ 
+# Leer y mostrar contenido de archivos .hea y .txt 
+with open(direccion_Head_ECG, 'r') as f: 
+    print("Archivo Head ECG") 
+    print(f.read()) 
+ 
+with open(direccion_Head_EEG, 'r') as f: 
+    print("Archivo Head EEG") 
+    print(f.read()) 
+ 
+with open(direccion_TXT, 'r') as f: 
+    print("Datos del paciente") 
+    print(f.read()) 
+ 
+# Cargar datos de los archivos .mat 
+ecgData = loadmat(direccion_ECG) 
+eegData = loadmat(direccion_EEG) 
+# Extraer la señal de ECG 
+ecgSignal = np.array(ecgData[list(ecgData.keys())[-1]], dtype=np.float64)[1, 
+10000:11000] 
+ 
+# Extraer la señal de EEG 
+eegSignal = np.array(eegData[list(eegData.keys())[-1]], 
+dtype=np.float64)[19, 10000:11000] 
+print("Dimensiones de ECG:", ecgData[list(ecgData.keys())[-1]].shape) 
+print("Dimensiones de EEG:", eegData[list(eegData.keys())[-1]].shape) 
+ 
+# Graficar la señal de ECG 
+plt.figure(0) 
+plt.plot(ecgSignal) 
+plt.title("Señal de ECG") 
+plt.xlabel("Muestras") 
+plt.ylabel("Amplitud") 
+ 
+# Graficar la señal de EEG 
+plt.figure(1) 
+plt.plot(eegSignal) 
+plt.title("Señal de EEG") 
+plt.xlabel("Muestras") 
+plt.ylabel("Amplitud") 
+ 
+plt.show() 
