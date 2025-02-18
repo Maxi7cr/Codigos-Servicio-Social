@@ -1,0 +1,68 @@
+import requests
+from bs4 import BeautifulSoup
+import os
+from urllib.parse import urljoin, urlparse
+
+# URL de la carpeta en PhysioNet
+url = "https://physionet.org/content/i-care/2.0/training/0328/"
+
+# Ruta de la carpeta predestinada
+carpeta_destino = "C:/Users/maxi-/Desktop/UPIITA/SERVICIO/Descargadedatos"
+registro_archivos = "archivos_descargados.txt"
+
+# Crear la carpeta si no existe
+os.makedirs(carpeta_destino, exist_ok=True)
+
+# Leer archivos ya descargados
+if os.path.exists(registro_archivos):
+    with open(registro_archivos, 'r') as f:
+        archivos_descargados = set(f.read().splitlines())
+else:
+    archivos_descargados = set()
+
+# Obtener el contenido de la página
+response = requests.get(url)
+soup = BeautifulSoup(response.text, 'html.parser')
+
+# Buscar y descargar todos los archivos
+for link in soup.find_all('a', href=True):
+    file_url = link['href']
+    
+    # Filtrar solo archivos
+    if file_url.endswith('/') or file_url == '..':
+        continue
+    
+    # Crear URL completa del archivo
+    full_url = urljoin(url, file_url)
+    
+    # Extraer solo el nombre del archivo sin parámetros
+    file_path_relative = urlparse(full_url).path.lstrip("/")
+    file_name = os.path.basename(file_path_relative)
+    
+    # Si el nombre de archivo está vacío, omitir
+    if not file_name:
+        print(f"Advertencia: nombre de archivo vacío para la URL {full_url}. Omitiendo...")
+        continue
+    
+    # Crear la ruta completa del archivo de destino
+    file_path_destino = os.path.join(carpeta_destino, file_path_relative)
+    os.makedirs(os.path.dirname(file_path_destino), exist_ok=True)
+
+    # Verificar si el archivo ya ha sido descargado
+    if file_name in archivos_descargados:
+        print(f"{file_name} ya descargado. Omitiendo...")
+        continue
+
+    # Descargar el archivo
+    print(f"Descargando {file_name}...")
+    file_response = requests.get(full_url)
+    
+    # Guardar el archivo en la carpeta predestinada
+    with open(file_path_destino, 'wb') as f:
+        f.write(file_response.content)
+    
+    # Registrar el archivo como descargado
+    with open(registro_archivos, 'a') as f:
+        f.write(file_name + "\n")
+
+print("Descarga completa.")
