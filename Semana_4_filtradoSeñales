@@ -1,0 +1,197 @@
+# Importar bibliotecas 
+import numpy as np 
+import matplotlib.pyplot as plt 
+from scipy.io import loadmat 
+from scipy.signal import butter, filtfilt, fftconvolve 
+import pywt 
+ 
+plt.close("all") 
+ 
+# Rutas de los archivos 
+direccion_ECG = "D:/SERVICIO SOCIAL/REDES NEURONALES/DatosPaciente/files/i
+care/2.0/training/0320/0320_003_018_ECG.mat" 
+direccion_EEG = "D:/SERVICIO SOCIAL/REDES NEURONALES/DatosPaciente/files/i
+care/2.0/training/0320/0320_003_018_EEG.mat" 
+direccion_Head_ECG = "D:/SERVICIO SOCIAL/REDES 
+NEURONALES/DatosPaciente/files/i
+care/2.0/training/0320/0320_003_018_ECG.hea" 
+direccion_Head_EEG = "D:/SERVICIO SOCIAL/REDES 
+NEURONALES/DatosPaciente/files/i
+care/2.0/training/0320/0320_003_018_EEG.hea" 
+direccion_TXT = "D:/SERVICIO SOCIAL/REDES NEURONALES/DatosPaciente/files/i
+care/2.0/training/0320/0320.txt" 
+ 
+# Leer y mostrar contenido de archivos .hea y .txt 
+with open(direccion_Head_ECG, 'r') as f: 
+    print("Archivo Head ECG") 
+    print(f.read()) 
+ 
+with open(direccion_Head_EEG, 'r') as f: 
+    print("Archivo Head EEG") 
+    print(f.read()) 
+with open(direccion_TXT, 'r') as f: 
+    print("Datos del paciente") 
+    print(f.read()) 
+ 
+# Cargar datos de los archivos .mat 
+ecgData = loadmat(direccion_ECG) 
+eegData = loadmat(direccion_EEG) 
+ 
+# Extraer la señal de ECG 
+ecgSignal = np.array(ecgData[list(ecgData.keys())[-1]], dtype=np.float64)[0, 
+10000:11000] 
+ 
+# Extraer la señal de EEG 
+eegSignal = np.array(eegData[list(eegData.keys())[-1]], dtype=np.float64)[0, 
+10000:11000] 
+print("Dimensiones de ECG:", ecgData[list(ecgData.keys())[-1]].shape) 
+print("Dimensiones de EEG:", eegData[list(eegData.keys())[-1]].shape) 
+ 
+# Graficar la señal de ECG 
+plt.figure(0) 
+plt.plot(ecgSignal) 
+plt.title("Señal de ECG") 
+plt.xlabel("Muestras") 
+plt.ylabel("Amplitud") 
+ 
+# Graficar la señal de EEG 
+plt.figure(1) 
+plt.plot(eegSignal) 
+plt.title("Señal de EEG") 
+plt.xlabel("Muestras") 
+plt.ylabel("Amplitud") 
+ 
+# Función para aplicar un filtro pasa-banda 
+def butter_bandpass(lowcut, highcut, fs, order=5): 
+    nyquist = 0.5 * fs 
+    low = lowcut / nyquist 
+    high = highcut / nyquist 
+    b, a = butter(order, [low, high], btype='band') 
+    return b, a 
+ 
+def bandpass_filter(data, lowcut, highcut, fs, order=5): 
+    b, a = butter_bandpass(lowcut, highcut, fs, order=order) 
+    y = filtfilt(b, a, data) 
+    return y 
+# Parámetros del filtro 
+fs = 500  # Frecuencia de muestreo 
+ 
+# Filtrar la señal de ECG (0.1 a 100 Hz) 
+ecgFiltered = bandpass_filter(ecgSignal, 0.1, 100, fs) 
+ 
+# Filtrar la señal de EEG (0.1 a 30 Hz) 
+eegFiltered = bandpass_filter(eegSignal, 0.1, 30, fs) 
+ 
+# Transformada de Fourier para ECG antes y después del filtrado 
+ecgFFT = np.fft.fft(ecgSignal) 
+ecgFFTFiltered = np.fft.fft(ecgFiltered) 
+freqs_ecg = np.fft.fftfreq(len(ecgSignal), 1/fs) 
+ 
+# Transformada de Fourier para EEG antes y después del filtrado 
+eegFFT = np.fft.fft(eegSignal) 
+eegFFTFiltered = np.fft.fft(eegFiltered) 
+freqs_eeg = np.fft.fftfreq(len(eegSignal), 1/fs) 
+ 
+# Graficar la señal filtrada de ECG 
+plt.figure(2) 
+plt.plot(ecgFiltered) 
+plt.title("Señal de ECG Filtrada (0.1-100 Hz)") 
+plt.xlabel("Muestras") 
+plt.ylabel("Amplitud") 
+ 
+# Graficar la señal filtrada de EEG 
+plt.figure(3) 
+plt.plot(eegFiltered) 
+plt.title("Señal de EEG Filtrada (0.1-30 Hz)") 
+plt.xlabel("Muestras") 
+plt.ylabel("Amplitud") 
+ 
+# Graficar la FFT de ECG antes y después del filtrado 
+plt.figure(4) 
+plt.plot(freqs_ecg[:len(ecgFFT)//2], np.abs(ecgFFT[:len(ecgFFT)//2]), 
+label='ECG Original') 
+plt.plot(freqs_ecg[:len(ecgFFTFiltered)//2], 
+np.abs(ecgFFTFiltered[:len(ecgFFTFiltered)//2]), label='ECG Filtrada') 
+plt.title("Espectro de ECG (Antes y Después del Filtrado)") 
+plt.xlabel("Frecuencia (Hz)") 
+plt.ylabel("Amplitud") 
+plt.legend() 
+# Graficar la FFT de EEG antes y después del filtrado 
+plt.figure(5) 
+plt.plot(freqs_eeg[:len(eegFFT)//2], np.abs(eegFFT[:len(eegFFT)//2]), 
+label='EEG Original') 
+plt.plot(freqs_eeg[:len(eegFFTFiltered)//2], 
+np.abs(eegFFTFiltered[:len(eegFFTFiltered)//2]), label='EEG Filtrada') 
+plt.title("Espectro de EEG (Antes y Después del Filtrado)") 
+plt.xlabel("Frecuencia (Hz)") 
+plt.ylabel("Amplitud") 
+plt.legend() 
+ 
+# Importar la biblioteca de wavelets 
+import pywt 
+ 
+# Descomposición wavelet en 5 niveles usando la wavelet Daubechies 'db4' 
+def wavelet_decomposition(signal, wavelet='db4', level=5): 
+    coeffs = pywt.wavedec(signal, wavelet, level=level) 
+    return coeffs 
+ 
+# Reconstrucción de la señal a partir de los coeficientes 
+def wavelet_reconstruction(coeffs, wavelet='db4'): 
+    reconstructed_signal = pywt.waverec(coeffs, wavelet) 
+    return reconstructed_signal 
+ 
+# Descomposición de la señal de ECG 
+coeffs_ecg = wavelet_decomposition(ecgSignal) 
+approx_ecg = coeffs_ecg[0]  # Componente de aproximación 
+details_ecg = coeffs_ecg[1:]  # Componentes de detalle 
+ 
+# Descomposición de la señal de EEG 
+coeffs_eeg = wavelet_decomposition(eegSignal) 
+approx_eeg = coeffs_eeg[0] 
+details_eeg = coeffs_eeg[1:] 
+ 
+# Graficar la descomposición wavelet de ECG 
+plt.figure(6) 
+plt.subplot(7, 1, 1) 
+plt.plot(ecgSignal) 
+plt.title('Señal de ECG Original') 
+ 
+plt.subplot(7, 1, 2) 
+plt.plot(approx_ecg) 
+plt.title('Aproximación ECG') 
+ 
+for i, detalle in enumerate(reversed(details_ecg)): 
+ plt.subplot(7, 1, i + 3) 
+    plt.plot(detalle) 
+    plt.title(f'Detalle {i+1} ECG') 
+ 
+# Graficar la descomposición wavelet de EEG 
+plt.figure(7) 
+plt.subplot(7, 1, 1) 
+plt.plot(eegSignal) 
+plt.title('Señal de EEG Original') 
+ 
+plt.subplot(7, 1, 2) 
+plt.plot(approx_eeg) 
+plt.title('Aproximación EEG') 
+ 
+for i, detalle in enumerate(reversed(details_eeg)): 
+    plt.subplot(7, 1, i + 3) 
+    plt.plot(detalle) 
+    plt.title(f'Detalle {i+1} EEG') 
+ 
+# Reconstrucción de la señal a partir de la aproximación y detalles 
+reconstructed_ecg = wavelet_reconstruction(coeffs_ecg) 
+reconstructed_eeg = wavelet_reconstruction(coeffs_eeg) 
+ 
+# Graficar la señal reconstruida de ECG 
+plt.figure(8) 
+plt.plot(reconstructed_ecg) 
+plt.title('Señal de ECG Reconstruida') 
+ 
+# Graficar la señal reconstruida de EEG 
+plt.figure(9) 
+plt.plot(reconstructed_eeg) 
+plt.title('Señal de EEG Reconstruida') 
+ 
+plt.show() 
