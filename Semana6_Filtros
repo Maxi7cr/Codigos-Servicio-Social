@@ -1,0 +1,190 @@
+import numpy as np 
+import matplotlib.pyplot as plt 
+from scipy.io import loadmat 
+from scipy.signal import butter, filtfilt 
+import pywt 
+ 
+plt.close("all") 
+ 
+# Rutas de los archivos 
+direccion_ECG = "C:/Users/maxi
+/Desktop/UPIITA/SERVICIO/Descargadedatos/files/i
+care/2.0/training/0320/0320_005_020_ECG.mat"  
+direccion_EEG = "C:/Users/maxi
+/Desktop/UPIITA/SERVICIO/Descargadedatos/files/i
+care/2.0/training/0320/0320_005_020_EEG.mat"  
+direccion_Head_ECG = open("C:/Users/maxi
+/Desktop/UPIITA/SERVICIO/Descargadedatos/files/i
+care/2.0/training/0320/0320_005_020_ECG.hea") 
+direccion_Head_EEG = open("C:/Users/maxi
+/Desktop/UPIITA/SERVICIO/Descargadedatos/files/i
+care/2.0/training/0320/0320_005_020_EEG.hea")  
+direccion_TXT = open("C:/Users/maxi
+/Desktop/UPIITA/SERVICIO/Descargadedatos/files/i
+care/2.0/training/0320/0320.txt" ) 
+ 
+# Lectura de archivos de texto 
+print("Archivo TXT") 
+print(direccion_TXT.read()) 
+direccion_TXT.close() 
+ 
+print("Archivo Head ECG") 
+print(direccion_Head_ECG.read()) 
+direccion_Head_ECG.close() 
+ 
+print("Archivo Head EEG") 
+print(direccion_Head_EEG.read()) 
+direccion_Head_EEG.close() 
+ 
+# Cargar datos de los archivos .mat 
+ecgData = loadmat(direccion_ECG) 
+eegData = loadmat(direccion_EEG) 
+# Extracción de señales 
+ecgSignal = np.array(list(ecgData.items())[0][1], dtype=np.float64)[0, 
+110000:111000] 
+ 
+eegSignals = np.array(eegData["val"])  
+ 
+C3_eeg = eegSignals[0, :]  # Canal C3 
+eegSignal = eegSignals[1, 110000:111000]  # Canal C4 
+O1_eeg = eegSignals[2, :]  # Canal O1 
+O2_eeg = eegSignals[3, :]  # Canal O2 
+Cz_eeg = eegSignals[4, :]  # Canal Cz 
+F3_eeg = eegSignals[5, :]  # Canal F3 
+F4_eeg = eegSignals[6, :]  # Canal F4 
+F7_eeg = eegSignals[7, :]  # Canal F7 
+F8_eeg = eegSignals[8, :]  # Canal F8 
+Fz_eeg = eegSignals[9, :]  # Canal Fz 
+Fp1_eeg = eegSignals[10, :]  # Canal Fp1 
+Fp2_eeg = eegSignals[11, :]  # Canal Fp2 
+Fpz_eeg = eegSignals[12, :]  # Canal Fpz 
+P3_eeg = eegSignals[13, :]  # Canal P3 
+P4_eeg = eegSignals[14, :]  # Canal P4 
+Pz_eeg = eegSignals[15, :]  # Canal Pz 
+T3_eeg = eegSignals[16, :]  # Canal T3 
+T4_eeg = eegSignals[17, :]  # Canal T4 
+T5_eeg = eegSignals[18, :]  # Canal T5 
+T6_eeg = eegSignals[19, :]  # Canal T6 
+ 
+# Definición de filtro pasabanda Butterworth 
+def butter_bandpass(lowcut, highcut, fs, order=3): 
+    nyq = 0.5 * fs 
+    low = lowcut / nyq 
+    high = highcut / nyq 
+    b, a = butter(order, [low, high], btype='band') 
+    return b, a 
+ 
+def apply_bandpass_filter(data, lowcut, highcut, fs, order=3): 
+    b, a = butter_bandpass(lowcut, highcut, fs, order=order) 
+    y = filtfilt(b, a, data) 
+    return y 
+ 
+# Parámetros de filtrado 
+fs_ecg = 500  # Frecuencia de muestreo para ECG (Hz) 
+fs_eeg = 500  # Frecuencia de muestreo para EEG (Hz) 
+lowcut_eeg, highcut_eeg = 0.1, 30 
+lowcut_ecg, highcut_ecg = 0.1, 60 
+ 
+# Filtrar señales 
+filtered_ecg = apply_bandpass_filter(ecgSignal, lowcut_ecg, highcut_ecg, 
+fs_ecg) 
+filtered_eeg = apply_bandpass_filter(eegSignal, lowcut_eeg, highcut_eeg, 
+fs_eeg) 
+ 
+Prom_eegsignal = np.mean(filtered_eeg) 
+filtered_eeg = filtered_eeg - Prom_eegsignal 
+ 
+Prom_ecgsignal = np.mean(filtered_ecg) 
+filtered_ecg = filtered_ecg - Prom_ecgsignal 
+ 
+# FFT para señales filtradas 
+N_ecg = len(filtered_ecg) 
+N_eeg = len(filtered_eeg) 
+fft_valores_ecg = np.fft.fft(filtered_ecg) 
+fft_frecuencias_ecg = np.fft.fftfreq(N_ecg, 1 / fs_ecg) 
+fft_magnitud_ecg = np.abs(fft_valores_ecg) 
+ 
+fft_valores_eeg = np.fft.fft(filtered_eeg) 
+fft_frecuencias_eeg = np.fft.fftfreq(N_eeg, 1 / fs_eeg) 
+fft_magnitud_eeg = np.abs(fft_valores_eeg) 
+ 
+coeffs = pywt.wavedec(filtered_ecg, 'db4', level=3) 
+c, l = coeffs[0], coeffs[1:] 
+filtered_ecgSignal_l = len(filtered_ecg) 
+t = np.arange(filtered_ecgSignal_l) / fs_ecg 
+ 
+# Reconstrucción de la última aproximación 
+a3 = pywt.waverec([coeffs[0]] + [np.zeros_like(d) for d in coeffs[1:]], 
+'db4')[:filtered_ecgSignal_l] 
+ 
+# Reconstrucción de los detalles 
+d1 = pywt.waverec([np.zeros_like(coeffs[0])] + [coeffs[1]] + 
+[np.zeros_like(d) for d in coeffs[2:]], 'db4')[:filtered_ecgSignal_l] 
+d2 = pywt.waverec([np.zeros_like(coeffs[0])] + [np.zeros_like(coeffs[1]), 
+coeffs[2]] + [np.zeros_like(d) for d in coeffs[3:]], 
+'db4')[:filtered_ecgSignal_l] 
+ 
+# Sumar la aproximación de nivel 5 y los detalles de nivel 1 a 4 
+suma_approx_detalles = a3 + d1 + d2  
+plt.figure(figsize=(10, 6)) 
+plt.plot(t, suma_approx_detalles, label='Aproximación + Detalles') 
+plt.title('Suma de la última aproximación y los detalles') 
+plt.xlabel('Tiempo (s)') 
+plt.ylabel('Amplitud') 
+plt.legend() 
+ 
+for i, detail in enumerate(coeffs[1:], start=1): 
+    plt.plot(detail) 
+    plt.title(f'Detail {i}') 
+    plt.xlabel('Samples') 
+    plt.ylabel('Amplitude') 
+ 
+plt.tight_layout() 
+ 
+# Graficar señales 
+plt.figure(figsize=(12, 8)) 
+ 
+plt.subplot(3,1,1) 
+plt.plot(ecgSignal) 
+plt.title("Señal de ECG") 
+ 
+# Señal de ECG filtrada 
+plt.subplot(3, 1, 2) 
+plt.plot(filtered_ecg, label="ECG Filtrado (0.1-100 Hz)", color='b') 
+plt.title("Señal de ECG Filtrada") 
+plt.xlabel("Muestras") 
+plt.ylabel("Amplitud") 
+plt.legend() 
+ 
+# Espectro de frecuencia para ECG 
+plt.subplot(3, 1, 3) 
+plt.plot(fft_frecuencias_ecg[:N_ecg // 2], fft_magnitud_ecg[:N_ecg // 2], 
+color='b') 
+plt.title("Espectro de Magnitud FFT para la Señal de ECG") 
+plt.xlabel("Frecuencia (Hz)") 
+plt.ylabel("Magnitud") 
+plt.grid() 
+ 
+plt.figure(figsize=(12, 8)) 
+plt.subplot(3,1,1) 
+plt.plot(eegSignal) 
+plt.title("Señal de EEG") 
+# Señal de EEG filtrada 
+plt.subplot(3, 1, 2) 
+plt.plot(filtered_eeg, label="EEG Filtrado (0.1-30 Hz)", color='g') 
+plt.title("Señal de EEG Filtrada") 
+plt.xlabel("Muestras") 
+plt.ylabel("Amplitud") 
+plt.legend() 
+ 
+# Espectro de frecuencia para EEG 
+plt.subplot(3, 1, 3) 
+plt.plot(fft_frecuencias_eeg[:N_eeg // 2], fft_magnitud_eeg[:N_eeg // 2], 
+color='g') 
+plt.title("Espectro de Magnitud FFT para la Señal de EEG") 
+plt.xlabel("Frecuencia (Hz)") 
+plt.ylabel("Magnitud") 
+plt.grid() 
+ 
+plt.tight_layout() 
+plt.show() 
