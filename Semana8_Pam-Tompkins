@@ -1,0 +1,179 @@
+import os 
+import numpy as np 
+import matplotlib.pyplot as plt 
+from scipy.io import loadmat 
+from scipy.signal import butter, filtfilt, find_peaks 
+ 
+# Cerrar figuras abiertas 
+plt.close("all")
+
+# Ruta del directorio 
+folder_path = "C:/Users/maxi
+/Desktop/UPIITA/SERVICIO/Descargadedatos/files/i-care/2.0/training/0328" 
+ 
+# Frecuencia de muestreo y duración del segmento (30 segundos en muestras) 
+sampling_rate = 200  # Frecuencia de muestreo (ajusta según los datos) 
+segment_duration = 30 * sampling_rate  # 30 segundos 
+ 
+# Número de señales a procesar 
+num_signals_to_process = 2 
+ 
+# Número de señales a ignorar 
+num_signals_to_skip = 3 
+ 
+# Definición de filtro pasabanda Butterworth 
+def butter_bandpass(lowcut, highcut, fs, order=3): 
+    nyq = 0.5 * fs 
+    low = lowcut / nyq 
+    high = highcut / nyq 
+    b, a = butter(order, [low, high], btype='band') 
+    return b, a 
+ 
+def apply_bandpass_filter(data, lowcut, highcut, fs, order=3): 
+    b, a = butter_bandpass(lowcut, highcut, fs, order=order) 
+    y = filtfilt(b, a, data) 
+    return y 
+ 
+# Implementación del algoritmo de Pan-Tompkins 
+def pan_tompkins_algorithm(signal, fs): 
+    # Paso 1: Filtrado pasabanda 
+    filtered_signal = apply_bandpass_filter(signal, lowcut=0.5, highcut=45, 
+fs=fs, order=3) 
+ 
+    # Paso 2: Derivada 
+    derivative = np.diff(filtered_signal, prepend=filtered_signal[0]) 
+ 
+    # Paso 3: Señal al cuadrado 
+    squared_signal = derivative ** 2 
+ 
+    # Paso 4: Promedio móvil (integración) 
+    integration_window = int(0.150 * fs)  # 150 ms 
+    integrated_signal = np.convolve(squared_signal, 
+np.ones(integration_window) / integration_window, mode='same') 
+ 
+    return filtered_signal, integrated_signal 
+ Función para dividir una señal en segmentos de duración específica 
+def split_signal_into_segments(signal, segment_size): 
+    num_segments = len(signal) // segment_size  # Número de segmentos 
+completos 
+    segments = [signal[i * segment_size:(i + 1) * segment_size] for i in 
+range(num_segments)] 
+    return np.array(segments)  # Convertir a arreglo numpy 
+ 
+# Solicitar al usuario seleccionar los canales deseados 
+selected_ecg_channel = 0 
+ 
+# Lista para almacenar señales procesadas 
+ecgs_to_plot = [] 
+ecgs_filtered = [] 
+pan_tompkins_results = [] 
+qrs_peaks_list = [] 
+ 
+# Contador para limitar el número de señales procesadas 
+signals_processed = 0 
+signals_skipped = 0 
+ 
+# Procesar todos los archivos .mat en la carpeta 
+for file_name in os.listdir(folder_path): 
+    if file_name.endswith(".mat") and "REF" not in file_name and "OTHER" not 
+in file_name: 
+        file_path = os.path.join(folder_path, file_name) 
+ 
+        if signals_skipped < num_signals_to_skip: 
+            signals_skipped += 1 
+            continue  # Ignorar las primeras señales según lo especificado 
+ 
+        print(f"Procesando archivo: {file_name}") 
+ 
+        # Clasificar el archivo como ECG según el nombre 
+        is_ecg = "ECG" in file_name.upper() 
+ 
+        # Cargar datos del archivo .mat 
+        data = loadmat(file_path) 
+ 
+        # Extraer señales (asume que las señales están en la clave "val") 
+        if "val" in data: 
+            signals = np.array(data["val"]) 
+ 
+            # Verificar que los canales seleccionados existan 
+ if is_ecg and selected_ecg_channel < signals.shape[0]: 
+                ecg_signal = signals[selected_ecg_channel] 
+                 
+                # Normalizar la señal original 
+                mean_signal = np.mean(ecg_signal) 
+                centered_signal = ecg_signal - mean_signal 
+ 
+                # Aplicar Pan-Tompkins 
+                filtered_signal, pan_tompkins_result = 
+pan_tompkins_algorithm(centered_signal, fs=sampling_rate) 
+ 
+                # Detectar picos QRS 
+                threshold = 0.4 * np.max(pan_tompkins_result)  # Umbral más 
+flexible 
+                qrs_peaks, _ = find_peaks(pan_tompkins_result, 
+height=threshold, distance=int(0.2 * sampling_rate)) 
+                print(f"Umbral de detección: {threshold}") 
+                print(f"Picos detectados: {qrs_peaks}") 
+ 
+                # Dividir en segmentos 
+                ecg_segments = split_signal_into_segments(centered_signal, 
+segment_duration) 
+                filtered_segments = 
+split_signal_into_segments(filtered_signal, segment_duration) 
+                pt_segments = 
+split_signal_into_segments(pan_tompkins_result, segment_duration) 
+ 
+                if len(ecg_segments) > 0: 
+                    ecgs_to_plot.append(ecg_segments[0])  # Agregar el 
+primer segmento de ECG 
+                    ecgs_filtered.append(filtered_segments[0])  # Agregar el 
+segmento filtrado 
+                    pan_tompkins_results.append(pt_segments[0])  # Agregar 
+el resultado del algoritmo 
+                    qrs_peaks_list.append(qrs_peaks[qrs_peaks < 
+len(ecg_segments[0])])  # Picos dentro del segmento 
+ 
+            signals_processed += 1 
+            if signals_processed >= num_signals_to_process: 
+                print("Se alcanzó el límite de señales a procesar.") 
+                break 
+        else: 
+            print(f"El archivo {file_name} no contiene datos bajo la clave 
+'val'.")
+ if signals_processed >= num_signals_to_process: 
+        break 
+ 
+# Graficar señales antes, después del filtrado y después de Pan-Tompkins 
+plt.figure(figsize=(12, 18)) 
+ 
+for i, (original, filtered, processed, qrs_peaks) in 
+enumerate(zip(ecgs_to_plot, ecgs_filtered, pan_tompkins_results, 
+qrs_peaks_list)): 
+    plt.subplot(3 * len(ecgs_to_plot), 1, 3 * i + 1) 
+    plt.plot(original, label=f"ECG Original {i + 1}") 
+    plt.title(f"Señal ECG Original {i + 1}") 
+    plt.xlabel("Muestras") 
+    plt.ylabel("Amplitud") 
+    plt.legend() 
+ 
+    plt.subplot(3 * len(ecgs_to_plot), 1, 3 * i + 2) 
+    plt.plot(filtered, label=f"ECG Filtrada {i + 1}", color="green") 
+    plt.title(f"Señal ECG Filtrada {i + 1}") 
+    plt.xlabel("Muestras") 
+    plt.ylabel("Amplitud") 
+    plt.legend() 
+ 
+    plt.subplot(3 * len(ecgs_to_plot), 1, 3 * i + 3) 
+    plt.plot(processed, label=f"ECG Procesada {i + 1}", color="orange") 
+    plt.scatter(qrs_peaks, processed[qrs_peaks], color='red', label='Picos 
+QRS') 
+    plt.title(f"ECG Procesada (Pan-Tompkins) {i + 1}") 
+    plt.xlabel("Muestras") 
+    plt.ylabel("Amplitud") 
+    plt.legend() 
+ 
+plt.tight_layout() 
+plt.show() 
+ 
+print("Procesamiento completado.") 
+
