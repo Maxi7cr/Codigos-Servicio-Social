@@ -1,0 +1,56 @@
+ import numpy as np 
+import matplotlib.pyplot as plt 
+from scipy.signal import stft 
+#FFT 
+# Crear una señal con dos frecuencias 
+fs = 1000  # Frecuencia de muestreo (Hz) 
+t = np.linspace(0, 1, fs, endpoint=False)  # Tiempo 
+f1, f2 = 50, 120  # Frecuencias (Hz) 
+signal = np.sin(2 * np.pi * f1 * t) + 0.5 * np.sin(2 * np.pi * f2 * t) 
+ 
+# Aplicar la FFT 
+fft_result = np.fft.fft(signal) 
+frequencies = np.fft.fftfreq(len(signal), 1/fs) 
+ 
+# Graficar señal original  
+plt.figure("Señal Original") 
+plt.plot(t, signal) 
+plt.title("Señal Original") 
+plt.xlabel("Tiempo (s)") 
+plt.ylabel("Amplitud") 
+plt.grid() 
+ 
+# Graficar FFT  
+plt.figure("FFT de la Señal") 
+plt.plot(frequencies[:fs//2], np.abs(fft_result)[:fs//2]) 
+plt.title("FFT de la Señal") 
+plt.xlabel("Frecuencia (Hz)") 
+plt.ylabel("Amplitud") 
+plt.grid() 
+ 
+#STFT 
+# Crear una señal con frecuencia cambiante 
+f_start, f_end = 20, 100  # Frecuencias inicial y final (Hz) 
+signal = np.sin(2 * np.pi * (f_start + (f_end - f_start) * t**2) * t) 
+ 
+# Calcular la STFT 
+frequencies, times, Zxx = stft(signal, fs, nperseg=256) 
+ 
+# Graficar señal original  
+
+plt.figure("Señal Original") 
+plt.plot(t, signal) 
+plt.title("Señal Original") 
+plt.xlabel("Tiempo (s)") 
+plt.ylabel("Amplitud") 
+plt.grid() 
+plt.show() 
+ 
+# Graficar STFT (espectrograma)  
+plt.figure("STFT de la Señal") 
+plt.pcolormesh(times, frequencies, np.abs(Zxx), shading='gouraud') 
+plt.title("STFT de la Señal") 
+plt.ylabel("Frecuencia (Hz)") 
+plt.xlabel("Tiempo (s)") 
+plt.colorbar(label="Amplitud") 
+plt.show() 
