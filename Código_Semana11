@@ -1,0 +1,71 @@
+import os 
+import re 
+import matplotlib.pyplot as plt 
+import numpy as np 
+from collections import defaultdict 
+ 
+def extract_patient_data(file_path): 
+    """Extrae los valores de CPC y Outcome de un archivo de texto.""" 
+    cpc, outcome = None, None 
+    with open(file_path, 'r', encoding='utf-8') as file: 
+        for line in file: 
+            if line.startswith("CPC:"): 
+                cpc = line.split(":")[1].strip() 
+            elif line.startswith("Outcome:"): 
+                outcome = line.split(":")[1].strip() 
+    return cpc, outcome 
+ 
+def analyze_patients_data(base_dir): 
+    """Recorre las carpetas y obtiene la cantidad de pacientes en cada 
+categoría de CPC y Outcome.""" 
+    cpc_count = defaultdict(int) 
+    outcome_count = defaultdict(int) 
+     
+    for root, _, files in os.walk(base_dir): 
+        for file in files: 
+            if file.endswith(".txt"):  # Solo procesamos archivos de texto 
+                file_path = os.path.join(root, file) 
+                cpc, outcome = extract_patient_data(file_path) 
+                if cpc: 
+                    cpc_count[cpc] += 1 
+                if outcome: 
+                    outcome_count[outcome] += 1 
+     
+    return cpc_count, outcome_count 
+def plot_data(data, title, xlabel, ylabel, x_labels=None): 
+    """Genera una gráfica de barras con los datos proporcionados.""" 
+    categories = sorted(data.keys(), key=lambda x: int(x) if x.isdigit() 
+else x) 
+    counts = [data[cat] for cat in categories] 
+    x_pos = np.arange(len(categories)) 
+     
+    plt.figure(figsize=(8, 5)) 
+    plt.bar(x_pos, counts, color='skyblue', align='center') 
+    plt.xlabel(xlabel) 
+    plt.ylabel(ylabel) 
+    plt.title(title) 
+    if x_labels: 
+        plt.xticks(x_pos, x_labels, rotation=45) 
+    else: 
+        plt.xticks(x_pos, categories, rotation=45) 
+    plt.grid(axis='y', linestyle='--', alpha=0.7) 
+    plt.show() 
+ 
+if __name__ == "__main__": 
+    base_directory = r"D:\ServicioSocial\Datos txt\physionet.org\files\i
+care\2.0\training" 
+    cpc_data, outcome_data = analyze_patients_data(base_directory) 
+     
+    print("Distribución de CPC:") 
+    for cpc, count in sorted(cpc_data.items()): 
+        print(f"CPC {cpc}: {count} pacientes") 
+     
+    print("\nDistribución de Outcome:") 
+    for outcome, count in sorted(outcome_data.items()): 
+        print(f"Outcome {outcome}: {count} pacientes") 
+     
+    # Generar gráficas 
+    plot_data(cpc_data, "Distribución de CPC", "CPC", "Cantidad de 
+Pacientes", x_labels=["CPC 1", "CPC 2", "CPC 3", "CPC 4", "CPC 5"]) 
+    plot_data(outcome_data, "Distribución de Outcome", "Outcome", "Cantidad 
+de Pacientes") 
