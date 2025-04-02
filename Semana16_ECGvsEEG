@@ -1,0 +1,244 @@
+import numpy as np
+import scipy.io as sio
+import scipy.signal as signal
+import matplotlib.pyplot as plt
+
+# --- Procesamiento y Análisis de EEG ---
+
+# Especificar la ruta completa del archivo .mat y .hea de EEG y ECG
+ruta_mat_eeg = r"C:\Users\maxi-\Desktop\UPIITA\SERVICIO\Descargadedatos\files\i-care\2.0\training\0328\0328_002_013_EEG.mat"
+ruta_hea_eeg = r"C:\Users\maxi-\Desktop\UPIITA\SERVICIO\Descargadedatos\files\i-care\2.0\training\0328\0328_002_013_EEG.hea"
+
+ruta_mat_ecg = r"C:\Users\maxi-\Desktop\UPIITA\SERVICIO\Descargadedatos\files\i-care\2.0\training\0328\0328_002_013_ECG.mat"
+ruta_hea_ecg = r"C:\Users\maxi-\Desktop\UPIITA\SERVICIO\Descargadedatos\files\i-care\2.0\training\0328\0328_002_013_ECG.hea"
+
+try:
+    # Cargar el archivo .mat de EEG
+    data_eeg = sio.loadmat(ruta_mat_eeg)
+    # Extraer los datos de EEG
+    eeg_data = data_eeg['val']
+    # Leer la información del archivo .hea de EEG
+    with open(ruta_hea_eeg, 'r') as f_eeg:
+        lines_eeg = f_eeg.readlines()
+    # Extraer los nombres de los canales de EEG
+    channel_names = [line.split()[-1] for line in lines_eeg[1:20]]
+    # Frecuencia de muestreo (Hz) para EEG
+    fs_eeg = 250
+    # Definir los índices de tiempo para el intervalo de 100s a 120s para EEG
+    start_sec_eeg = 120
+    end_sec_eeg = 140
+    start_idx_eeg = int(start_sec_eeg * fs_eeg)
+    end_idx_eeg = int(end_sec_eeg * fs_eeg)
+    # Crear el nuevo vector de tiempo para EEG
+    t_eeg = np.arange(start_idx_eeg, end_idx_eeg) / fs_eeg
+    # --- Filtro Notch para eliminar 50 Hz ---
+    def notch_filter(data, fs, freq=50, Q=30):
+        b, a = signal.iirnotch(freq, Q, fs)
+        return signal.filtfilt(b, a, data)
+    # --- Filtro pasabanda Butterworth 0.1 Hz - 30 Hz ---
+    def bandpass_filter(data, fs, lowcut=0.1, highcut=30, order=4):
+        b, a = signal.butter(order, [lowcut / (fs / 2), highcut / (fs / 2)], btype='band')
+        return signal.filtfilt(b, a, data)
+    # Aplicar filtros a cada canal de EEG
+    filtered_eeg = np.zeros_like(eeg_data)
+    for i in range(eeg_data.shape[0]):
+        filtered_eeg[i] = notch_filter(eeg_data[i], fs_eeg)  # Aplicar Notch
+        filtered_eeg[i] = bandpass_filter(filtered_eeg[i], fs_eeg)  # Aplicar Pasabanda
+    # Extraer solo la ventana de tiempo solicitada para EEG
+    eeg_data = eeg_data[:, start_idx_eeg:end_idx_eeg]
+    filtered_eeg = filtered_eeg[:, start_idx_eeg:end_idx_eeg]
+    # --- Transformada de Fourier ---
+    def calculate_fft(data, fs):
+        fft_values = np.fft.fft(data)
+        frequencies = np.fft.fftfreq(len(data), 1 / fs)
+        return frequencies, np.abs(fft_values)
+    # Canales a graficar para EEG
+    channels_to_plot = ['Pz', 'Cz', 'Fz', 'C3', 'C4']
+    channel_indices = [channel_names.index(channel) for channel in channels_to_plot]
+    # Graficar señales filtradas y FFTs para EEG
+    eeg_figs = []
+    for channel_index in channel_indices:
+        f_original, fft_original = calculate_fft(eeg_data[channel_index], fs_eeg)
+        f_filtered, fft_filtered = calculate_fft(filtered_eeg[channel_index], fs_eeg)
+        fig = plt.figure(figsize=(15, 10))
+        plt.subplot(3, 1, 1)
+        plt.plot(t_eeg, filtered_eeg[channel_index])
+        plt.title(f"Señal Filtrada - {channel_names[channel_index]} (EEG)")
+        plt.xlabel('Tiempo (s)')
+        plt.ylabel('Amplitud (µV)')
+        plt.subplot(3, 1, 2)
+        plt.plot(f_original, fft_original)
+        plt.title(f"FFT Original - {channel_names[channel_index]} (EEG)")
+        plt.xlabel('Frecuencia (Hz)')
+        plt.ylabel('Amplitud')
+        plt.subplot(3, 1, 3)
+        plt.plot(f_filtered, fft_filtered)
+        plt.title(f"FFT Filtrado - {channel_names[channel_index]} (EEG)")
+        plt.xlabel('Frecuencia (Hz)')
+        plt.ylabel('Amplitud')
+        plt.tight_layout()
+        eeg_figs.append(fig)
+    # Graficar el espectro de potencia utilizando el método de Welch
+    welch_figs = []
+    for channel_index in channel_indices:
+        f_welch_eeg, psd_welch_eeg = signal.welch(filtered_eeg[channel_index], fs_eeg)
+        fig = plt.figure(figsize=(10, 5))
+        plt.plot(f_welch_eeg, psd_welch_eeg)
+        plt.xlabel("Frecuencia (Hz)")
+        plt.ylabel("Densidad espectral de potencia")
+        plt.title(f"Espectro de potencia de {channel_names[channel_index]} (EEG) (Welch)")
+        welch_figs.append(fig)
+except FileNotFoundError:
+    print(f"Error: No se encontró el archivo EEG en la ruta especificada.")
+except KeyError:
+    print(f"Error: Clave de datos incorrecta en el archivo EEG.")
+except Exception as e:
+    print(f"Error inesperado al procesar EEG: {e}")
+
+# --- Procesamiento y Análisis de ECG ---
+
+try:
+    # Cargar el archivo .mat de ECG
+    data_ecg = sio.loadmat(ruta_mat_ecg)
+    # Extraer la señal de ECG (ajusta la clave si es necesario)
+    ecg_signal = data_ecg['val'][0]  # Cambia 'val' por la clave correcta si es diferente
+    # Frecuencia de muestreo (ajusta si es diferente en tu archivo) para ECG
+    fs_ecg = 250  # 250Hz
+    # Seleccionar solo los segundos entre 100 y 220 para ECG
+    inicio_ecg = 100 * fs_ecg  # Índice inicial
+    fin_ecg = 220 * fs_ecg  # Índice final
+    ecg_signal = ecg_signal[inicio_ecg:fin_ecg]
+    # Crear el eje de tiempo en segundos para ECG
+    t_ecg = np.arange(inicio_ecg, fin_ecg) / fs_ecg
+    # Filtrar la señal de ECG (pasa bandas entre 0.1 y 50 Hz)
+    b_ecg, a_ecg = signal.butter(4, [0.1, 50], btype='bandpass', fs=fs_ecg)
+    ecg_filtrado = signal.filtfilt(b_ecg, a_ecg, ecg_signal)
+    # Detectar los picos R en ECG
+    picos_R, _ = signal.find_peaks(ecg_filtrado, height=np.mean(ecg_filtrado), distance=fs_ecg / 2)
+    # Calcular intervalos RR en ECG
+    tiempos_R = t_ecg[picos_R]
+    intervalos_RR = np.diff(tiempos_R) * 1000  # Convertir a milisegundos
+    # Calcular FFT de la señal de ECG original y filtrada
+    f_original_ecg, fft_original_ecg = calculate_fft(ecg_signal, fs_ecg)
+    f_filtrado_ecg, fft_filtrado_ecg = calculate_fft(ecg_filtrado, fs_ecg)
+    # Graficar todas las figuras juntas para ECG
+    fig_ecg, axes_ecg = plt.subplots(3, 1, figsize=(10, 15))
+    # Gráfico de ECG con picos R detectados
+    axes_ecg[0].plot(t_ecg, ecg_filtrado, label="ECG Filtrado")
+    axes_ecg[0].plot(t_ecg[picos_R], ecg_filtrado[picos_R], 'ro', label="Picos R")
+    axes_ecg[0].set_xlabel("Tiempo (s)")
+    axes_ecg[0].set_ylabel("Amplitud")
+    axes_ecg[0].legend()
+    axes_ecg[0].set_title("Detección de Picos R (ECG)")
+    # Gráfico de los intervalos RR
+    axes_ecg[1].plot(intervalos_RR, marker='o', linestyle='-', label="Intervalos RR (ms)")
+    axes_ecg[1].set_ylabel("Tiempo entre latidos (ms)")
+    axes_ecg[1].set_xlabel("Latido")
+    axes_ecg[1].legend()
+    axes_ecg[1].set_title("Variabilidad de la Frecuencia Cardíaca (VFC) (ECG)")
+    # Gráfico de bigotes (Boxplot) de los intervalos RR
+    axes_ecg[2].boxplot(intervalos_RR, vert=False, patch_artist=True, boxprops=dict(facecolor="lightblue"))
+    axes_ecg[2].set_xlabel("Tiempo entre latidos (ms)")
+    axes_ecg[2].set_title("Distribución de Intervalos RR (Boxplot) (ECG)")
+
+    # Ventana aparte para FFT de ECG
+    fig_fft, axes_fft = plt.subplots(2, 1, figsize=(10, 10))
+    axes_fft[0].plot(f_original_ecg, fft_original_ecg, label="FFT Original")
+    axes_fft[0].set_xlabel("Frecuencia (Hz)")
+    axes_fft[0].set_ylabel("Amplitud")
+    axes_fft[0].set_title("FFT de la Señal de ECG Original")
+    axes_fft[0].legend()
+    axes_fft[1].plot(f_filtrado_ecg, fft_filtrado_ecg, label="FFT Filtrado")
+    axes_fft[1].set_xlabel("Frecuencia (Hz)")
+    axes_fft[1].set_ylabel("Amplitud")
+    axes_fft[1].set_title("FFT de la Señal de ECG Filtrada")
+    axes_fft[1].legend()
+    plt.tight_layout()
+
+    # Función para calcular métricas de HRV en el dominio del tiempo para ECG
+    def calcular_hrv_tiempo(intervalos_RR):
+        resultados = {}
+        resultados['mean_RR'] = np.mean(intervalos_RR)  # Media de los intervalos RR
+        resultados['std_RR'] = np.std(intervalos_RR)  # Desviación estándar de los intervalos RR
+        resultados['rmssd'] = np.sqrt(np.mean(np.square(np.diff(intervalos_RR))))  # RMSSD
+        resultados['nn50'] = np.sum(np.abs(np.diff(intervalos_RR)) > 50)  # Número de pares de intervalos RR consecutivos que difieren en más de 50 ms
+        resultados['pnn50'] = (resultados['nn50'] / len(intervalos_RR)) * 100  # Porcentaje de nn50
+        return resultados
+    # Función para calcular métricas de HRV en el dominio de la frecuencia para ECG
+    def calcular_hrv_frecuencia(intervalos_RR, fs=4.0):
+        # Interpolación para obtener una señal uniformemente muestreada
+        tiempo_RR = np.cumsum(intervalos_RR) / 1000.0  # Convertir a segundos
+        tiempo_interp = np.arange(tiempo_RR[0], tiempo_RR[-1], 1 / fs)
+        rr_interp = np.interp(tiempo_interp, tiempo_RR, intervalos_RR)
+        # Calcular la transformada de Fourier
+        n = len(rr_interp)
+        frecuencias = np.fft.rfftfreq(n, d=1 / fs)
+        espectro = np.abs(np.fft.rfft(rr_interp - np.mean(rr_interp)))
+        # Bandas de frecuencia
+        vlf_band = (0.0033, 0.04)  # Muy baja frecuencia
+        lf_band = (0.04, 0.15)  # Baja frecuencia
+        hf_band = (0.15, 0.4)  # Alta frecuencia
+        # Calcular la potencia en cada banda
+        vlf = np.trapz(espectro[(frecuencias >= vlf_band[0]) & (frecuencias < vlf_band[1])],
+                        frecuencias[(frecuencias >= vlf_band[0]) & (frecuencias < vlf_band[1])])
+        lf = np.trapz(espectro[(frecuencias >= lf_band[0]) & (frecuencias < lf_band[1])],
+                       frecuencias[(frecuencias >= lf_band[0]) & (frecuencias < lf_band[1])])
+        hf = np.trapz(espectro[(frecuencias >= hf_band[0]) & (frecuencias < hf_band[1])],
+                       frecuencias[(frecuencias >= hf_band[0]) & (frecuencias < hf_band[1])])
+        # Calcular la relación LF/HF
+        lf_hf_ratio = lf / hf
+        resultados = {
+            'vlf': vlf,
+            'lf': lf,
+            'hf': hf,
+            'lf_hf_ratio': lf_hf_ratio
+        }
+        return resultados
+    with open(ruta_hea_ecg, "r") as archivo:
+        contenido = archivo.readlines()
+    # Imprime cada línea del archivo ECG
+    for linea in contenido:
+        print(linea.strip())
+    # Calcular métricas de HRV para ECG
+    resultados_tiempo = calcular_hrv_tiempo(intervalos_RR)
+    resultados_frecuencia = calcular_hrv_frecuencia(intervalos_RR)
+    # Mostrar resultados de HRV para ECG
+    print(" Análisis en el Dominio del Tiempo (ECG):")
+    print(resultados_tiempo)
+    print("\n Análisis en el Dominio de la Frecuencia (ECG):")
+    print(resultados_frecuencia)
+except FileNotFoundError:
+    print(f"Error: No se encontró el archivo ECG en la ruta especificada.")
+except KeyError:
+    print(f"Error: Clave de datos incorrecta en el archivo ECG.")
+except Exception as e:
+    print(f"Error inesperado al procesar ECG: {e}")
+# --- Gráficas Adicionales (ECG y EEG 120s-140s) ---
+    channels_to_plot_extra = ['Fz', 'F3', 'F4', 'Cz', 'Pz']
+    channel_indices_extra = [channel_names.index(channel) for channel in channels_to_plot_extra]
+    start_sec_extra = 120
+    end_sec_extra = 140
+    start_idx_extra = int(start_sec_extra * fs_eeg)
+    end_idx_extra = int(end_sec_extra * fs_eeg)
+    t_extra = np.arange(start_idx_extra, end_idx_extra) / fs_eeg
+    for channel_index in channel_indices_extra:
+        plt.figure(figsize=(15, 10))
+        # Señal ECG filtrada (120s-140s)
+        plt.subplot(2, 1, 1)
+        ecg_filtered_extra = ecg_filtrado[(t_ecg >= 120) & (t_ecg <= 140)]
+        t_ecg_extra = t_ecg[(t_ecg >= 120) & (t_ecg <= 140)]
+        plt.plot(t_ecg_extra, ecg_filtered_extra, label="ECG Filtrado")
+        plt.title(f"ECG Filtrado (120s-140s)")
+        plt.xlabel("Tiempo (s)")
+        plt.ylabel("Amplitud")
+        plt.legend()
+        # Señal EEG filtrada (120s-140s)
+        plt.subplot(2, 1, 2)
+        eeg_filtered_extra = filtered_eeg[channel_index, start_idx_extra:end_idx_extra]
+        plt.plot(t_extra, eeg_filtered_extra)
+        plt.title(f"Señal EEG Filtrada - {channel_names[channel_index]} (120s-140s)")
+        plt.xlabel("Tiempo (s)")
+        plt.ylabel("Amplitud (µV)")
+        plt.tight_layout()
+# Mostrar todas las figuras juntas
+plt.show()
