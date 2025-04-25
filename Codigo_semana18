@@ -1,0 +1,203 @@
+import scipy.io
+import pywt
+import numpy as np
+import matplotlib.pyplot as plt
+import os
+import re
+from scipy.signal import butter, filtfilt
+
+# === CONFIGURACIÓN GENERAL ===
+directorio_principal = "C:/Users/maxi-/Desktop/UPIITA/SERVICIO/Descargadedatos/files/i-care/2.0/training/0328"
+num_archivos_a_procesar = 24
+archivos_por_grafica = 4
+patron_nombre_archivo = re.compile(r".*EEG\.mat$", re.IGNORECASE)
+
+archivos_eeg = []
+for nombre_archivo in os.listdir(directorio_principal):
+    if patron_nombre_archivo.match(nombre_archivo):
+        archivos_eeg.append(nombre_archivo)
+
+archivos_a_procesar = archivos_eeg[:num_archivos_a_procesar]
+
+if not archivos_a_procesar:
+    print(f"No se encontraron archivos EEG .mat en el directorio: {directorio_principal}")
+    exit()
+elif len(archivos_a_procesar) < num_archivos_a_procesar:
+    print(f"Se encontraron {len(archivos_a_procesar)} archivos EEG .mat. Se procesarán estos archivos.")
+else:
+    print(f"Se procesarán los primeros {num_archivos_a_procesar} archivos EEG .mat encontrados.")
+
+# Parámetros de muestreo y segmentación
+fs = 250
+tiempo_inicio = 1000
+duracion_ventana = 3
+muestras_inicio = int(tiempo_inicio * fs)
+muestras_fin = muestras_inicio + int(duracion_ventana * fs)
+
+# Canal deseado
+canal_deseado = 6
+
+# === CONFIGURACIÓN DEL FILTRO PASABANDAS ===
+frecuencia_corte_bajo = 0.1  # Hz
+frecuencia_corte_alto = 30.0 # Hz
+orden_filtro = 4
+
+# Wavelet y bandas
+wavelet = 'db4'
+wavelet_obj = pywt.Wavelet(wavelet)
+bandas = ['Delta', 'Theta', 'Alpha', 'Beta', 'Gamma Baja', 'Gamma Alta']
+colores = ['blue', 'green', 'orange', 'red', 'purple', 'brown']
+
+# === PROCESO Y GRAFICACIÓN POR LOTES ===
+num_lotes = (len(archivos_a_procesar) + archivos_por_grafica - 1) // archivos_por_grafica
+
+for lote in range(num_lotes):
+    start_index = lote * archivos_por_grafica
+    end_index = min((lote + 1) * archivos_por_grafica, len(archivos_a_procesar))
+    batch_archivos = archivos_a_procesar[start_index:end_index]
+    num_archivos_en_batch = len(batch_archivos)
+
+    plt.figure(figsize=(14, 12 * num_archivos_en_batch)) # Doble altura para mostrar antes y después
+
+    for idx_en_lote, archivo in enumerate(batch_archivos):
+        ruta_archivo = os.path.join(directorio_principal, archivo)
+        try:
+            data = scipy.io.loadmat(ruta_archivo)
+            eeg = data['val']
+            canal_original = eeg[canal_deseado, :]
+            segmento_original = canal_original[muestras_inicio:muestras_fin]
+
+            # === APLICACIÓN DEL FILTRO PASABANDAS ===
+            nyquist_frecuencia = 0.5 * fs
+            frecuencia_normalizada_bajo = frecuencia_corte_bajo / nyquist_frecuencia
+            frecuencia_normalizada_alto = frecuencia_corte_alto / nyquist_frecuencia
+            b, a = butter(orden_filtro, [frecuencia_normalizada_bajo, frecuencia_normalizada_alto], btype='band')
+            segmento_filtrado = filtfilt(b, a, segmento_original)
+
+            # === ANÁLISIS WAVELET ANTES DEL FILTRO ===
+            nivel_max_orig = pywt.dwt_max_level(len(segmento_original), wavelet_obj.dec_len)
+            coef_orig = pywt.wavedec(segmento_original, wavelet, level=nivel_max_orig)
+            asignaciones_orig = dict(zip(bandas, list(range(nivel_max_orig, nivel_max_orig - len(bandas), -1))))
+            bandas_disponibles_orig = list(asignaciones_orig.keys())
+            reconstruidas_orig = []
+            for banda in bandas_disponibles_orig:
+                nivel = asignaciones_orig[banda]
+                coef_band = [np.zeros_like(c) for c in coef_orig]
+                coef_band[nivel] = coef_orig[nivel]
+                rec = pywt.waverec(coef_band, wavelet)
+                reconstruidas_orig.append(rec[:len(segmento_original)])
+
+            # === ANÁLISIS WAVELET DESPUÉS DEL FILTRO ===
+            nivel_max_filt = pywt.dwt_max_level(len(segmento_filtrado), wavelet_obj.dec_len)
+            coef_filt = pywt.wavedec(segmento_filtrado, wavelet, level=nivel_max_filt)
+            asignaciones_filt = dict(zip(bandas, list(range(nivel_max_filt, nivel_max_filt - len(bandas), -1))))
+            bandas_disponibles_filt = list(asignaciones_filt.keys())
+            reconstruidas_filt = []
+            for banda in bandas_disponibles_filt:
+                nivel = asignaciones_filt[banda]
+                coef_band = [np.zeros_like(c) for c in coef_filt]
+                coef_band[nivel] = coef_filt[nivel]
+                rec = pywt.waverec(coef_band, wavelet)
+                reconstruidas_filt.append(rec[:len(segmento_filtrado)])
+
+            # Graficar bandas (ANTES DEL FILTRO - Izquierda)
+            tiempo = np.arange(len(segmento_original)) / fs
+            plt.subplot(num_archivos_en_batch, 2, 2 * idx_en_lote + 1)
+            for b_idx, (rec, banda) in enumerate(zip(reconstruidas_orig, bandas_disponibles_orig)):
+                plt.plot(tiempo, rec, color=colores[b_idx], label=f'Banda {banda}')
+            plt.title(f"Antes del Filtro: {archivo} - Canal {canal_deseado + 1} - Fz")
+            plt.xlabel("Tiempo (s)")
+            plt.ylabel("Amplitud")
+            plt.legend(fontsize='small')
+
+            # Graficar bandas (DESPUÉS DEL FILTRO - Derecha)
+            tiempo_filt = np.arange(len(segmento_filtrado)) / fs
+            plt.subplot(num_archivos_en_batch, 2, 2 * idx_en_lote + 2)
+            for b_idx, (rec, banda) in enumerate(zip(reconstruidas_filt, bandas_disponibles_filt)):
+                plt.plot(tiempo_filt, rec, color=colores[b_idx], label=f'Banda {banda}')
+            plt.title(f"Después del Filtro ({frecuencia_corte_bajo}-{frecuencia_corte_alto} Hz):")
+            plt.xlabel("Tiempo (s)")
+            plt.ylabel("Amplitud")
+            plt.legend(fontsize='small')
+
+            # Cálculo y muestra de energías (solo para el primer lote)
+            if lote == 0 and idx_en_lote == 0:
+                print(f"\n=== Energía por Banda (Antes vs. Después del Filtro) para los primeros archivos ===")
+            if lote == 0:
+                energias_orig = [np.sum(b**2) for b in reconstruidas_orig]
+                energias_filt = [np.sum(b**2) for b in reconstruidas_filt]
+                print(f"\n--- {archivo} (Canal {canal_deseado + 1}) ---")
+                print("  --- Antes del Filtro ---")
+                for b_idx, energia in enumerate(energias_orig):
+                    print(f"    {bandas_disponibles_orig[b_idx]:12s}: {energia:.2f}")
+                print("  --- Después del Filtro ---")
+                for b_idx, energia in enumerate(energias_filt):
+                    print(f"    {bandas_disponibles_filt[b_idx]:12s}: {energia:.2f}")
+
+        except FileNotFoundError:
+            print(f"Error: No se encontró el archivo {ruta_archivo}")
+        except KeyError:
+            print(f"Error: El archivo {ruta_archivo} no contiene la clave 'val'.")
+        except Exception as e:
+            print(f"Ocurrió un error al procesar {ruta_archivo}: {e}")
+
+    plt.tight_layout()
+
+# Mostrar todas las figuras al final
+plt.show()
+
+# Mostrar energías para los archivos restantes después del primer lote
+if num_lotes > 1:
+    print(f"\n=== Energía por Banda (Antes vs. Después del Filtro) para los archivos restantes ===")
+    for lote in range(1, num_lotes):
+        start_index = lote * archivos_por_grafica
+        end_index = min((lote + 1) * archivos_por_grafica, len(archivos_a_procesar))
+        batch_archivos = archivos_a_procesar[start_index:end_index]
+        for archivo in batch_archivos:
+            ruta_archivo = os.path.join(directorio_principal, archivo)
+            try:
+                data = scipy.io.loadmat(ruta_archivo)
+                eeg = data['val']
+                canal_original = eeg[canal_deseado, :]
+                segmento_original = canal_original[muestras_inicio:muestras_fin]
+
+                # === APLICACIÓN DEL FILTRO PASABANDAS ===
+                nyquist_frecuencia = 0.5 * fs
+                frecuencia_normalizada_bajo = frecuencia_corte_bajo / nyquist_frecuencia
+                frecuencia_normalizada_alto = frecuencia_corte_alto / nyquist_frecuencia
+                b, a = butter(orden_filtro, [frecuencia_normalizada_bajo, frecuencia_normalizada_alto], btype='band')
+                segmento_filtrado = filtfilt(b, a, segmento_original)
+
+                # === ANÁLISIS WAVELET ANTES DEL FILTRO ===
+                nivel_max_orig = pywt.dwt_max_level(len(segmento_original), wavelet_obj.dec_len)
+                coef_orig = pywt.wavedec(segmento_original, wavelet, level=nivel_max_orig)
+                asignaciones_orig = dict(zip(bandas, list(range(nivel_max_orig, nivel_max_orig - len(bandas), -1))))
+                bandas_disponibles_orig = list(asignaciones_orig.keys())
+                reconstruidas_orig = []
+                energias_orig = [np.sum(pywt.waverec([np.zeros_like(c) for c in coef_orig[:l]] + [coef_orig[l]] + [np.zeros_like(c) for c in coef_orig[l+1:]], wavelet)[:len(segmento_original)]**2)
+                                    for l in asignaciones_orig.values()]
+
+                # === ANÁLISIS WAVELET DESPUÉS DEL FILTRO ===
+                nivel_max_filt = pywt.dwt_max_level(len(segmento_filtrado), wavelet_obj.dec_len)
+                coef_filt = pywt.wavedec(segmento_filtrado, wavelet, level=nivel_max_filt)
+                asignaciones_filt = dict(zip(bandas, list(range(nivel_max_filt, nivel_max_filt - len(bandas), -1))))
+                bandas_disponibles_filt = list(asignaciones_filt.keys())
+                reconstruidas_filt = []
+                energias_filt = [np.sum(pywt.waverec([np.zeros_like(c) for c in coef_filt[:l]] + [coef_filt[l]] + [np.zeros_like(c) for c in coef_filt[l+1:]], wavelet)[:len(segmento_filtrado)]**2)
+                                    for l in asignaciones_filt.values()]
+
+                print(f"\n--- {archivo} (Canal {canal_deseado + 1}) ---")
+                print("  --- Antes del Filtro ---")
+                for b_idx, energia in enumerate(energias_orig):
+                    print(f"    {bandas_disponibles_orig[b_idx]:12s}: {energia:.2f}")
+                print("  --- Después del Filtro ---")
+                for b_idx, energia in enumerate(energias_filt):
+                    print(f"    {bandas_disponibles_filt[b_idx]:12s}: {energia:.2f}")
+
+            except Exception as e:
+                print(f"Ocurrió un error al calcular energías para {archivo}: {e}")
+
+    plt.tight_layout()
+
+# Mostrar todas las figuras al final
+plt.show()
