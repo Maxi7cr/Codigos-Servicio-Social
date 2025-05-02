@@ -1,0 +1,124 @@
+import re
+import os
+import scipy.io
+import scipy.signal as signal
+import numpy as np
+import matplotlib.pyplot as plt
+
+# === CONFIGURACIÓN GENERAL ===
+directorio_principal = "C:/Users/maxi-/Desktop/UPIITA/SERVICIO/Descargadedatos/files/i-care/2.0/training/0328"
+num_archivos_a_procesar = 51
+patron_nombre_archivo_mat = re.compile(r".*ECG\.mat$", re.IGNORECASE) # Ajustar para archivos ECG
+
+archivos_mat = [nombre for nombre in os.listdir(directorio_principal) if patron_nombre_archivo_mat.match(nombre)][:num_archivos_a_procesar]
+
+if not archivos_mat:
+    print(f"No se encontraron archivos ECG .mat en el directorio: {directorio_principal}")
+    exit()
+elif len(archivos_mat) < num_archivos_a_procesar:
+    print(f"Se encontraron {len(archivos_mat)} archivos ECG .mat. Se procesarán estos archivos.")
+else:
+    print(f"Se procesarán los primeros {num_archivos_a_procesar} archivos ECG .mat encontrados.")
+
+# Parámetros de muestreo y segmentación (asumiendo fs = 250 Hz)
+fs = 250
+tiempo_inicio = 750 #ESTE DATO PUEDE MODIFICARSE A CUALQUIER NECESIDAD
+duracion_ventana = 60 #ESTE DATO PUEDE MODIFICARSE A CUALQUIER NECESIDAD
+muestras_ventana = int(duracion_ventana * fs)
+muestras_inicio_archivo = int(tiempo_inicio * fs)
+
+# Almacenamiento de las métricas de VFC a lo largo del tiempo
+all_hrv_metrics = {
+    'mean_RR': [],
+    'std_RR': [],
+    'rmssd': [],
+    # Añade aquí otras métricas de VFC que quieras rastrear
+}
+
+print("\n=== Procesando archivos y calculando VFC ===")
+
+for idx_archivo, archivo_mat in enumerate(archivos_mat):
+    ruta_archivo_mat = os.path.join(directorio_principal, archivo_mat)
+    print(f"\n--- Procesando archivo: {archivo_mat} (Hora {idx_archivo + 1}) ---")
+
+    try:
+        data = scipy.io.loadmat(ruta_archivo_mat)
+        ecg_signal = data['val'][0]  # Asegúrate de que esta es la clave correcta
+
+        # Filtrar la señal (pasa bandas entre 0.1 y 30 Hz - mismos parámetros que antes)
+        b, a = signal.butter(4, [0.1, 30], btype='bandpass', fs=fs)
+        ecg_filtrado = signal.filtfilt(b, a, ecg_signal)
+
+        # Segmentar la señal y calcular VFC para cada ventana
+        num_ventanas = (len(ecg_filtrado) - muestras_inicio_archivo) // muestras_ventana
+        for i in range(num_ventanas):
+            inicio_ventana = muestras_inicio_archivo + i * muestras_ventana
+            fin_ventana = inicio_ventana + muestras_ventana
+            segmento_ecg = ecg_filtrado[inicio_ventana:fin_ventana]
+
+            if len(segmento_ecg) < 0.5 * fs: # Asegurar una longitud mínima para el análisis
+                continue
+
+            # Detectar picos R dentro de la ventana
+            picos_R, _ = signal.find_peaks(segmento_ecg, height=np.mean(segmento_ecg), distance=fs/2)
+
+            if len(picos_R) > 1: # Necesitamos al menos dos picos para calcular intervalos RR
+                # Calcular intervalos RR (en segundos)
+                tiempos_pico = np.arange(len(segmento_ecg))[picos_R] / fs
+                intervalos_RR = np.diff(tiempos_pico) * 1000 # Convertir a ms
+
+                if len(intervalos_RR) > 1: # Necesitamos al menos dos intervalos RR para las métricas
+                    # Calcular métricas de VFC en el dominio del tiempo (adaptado de tu función)
+                    mean_RR = np.mean(intervalos_RR)
+                    std_RR = np.std(intervalos_RR)
+                    rmssd = np.sqrt(np.mean(np.square(np.diff(intervalos_RR))))
+
+                    all_hrv_metrics['mean_RR'].append(mean_RR)
+                    all_hrv_metrics['std_RR'].append(std_RR)
+                    all_hrv_metrics['rmssd'].append(rmssd)
+                    # Añade aquí el almacenamiento de otras métricas que calcules
+
+    except FileNotFoundError:
+        print(f"Error: No se encontró el archivo {ruta_archivo_mat}")
+    except KeyError:
+        print(f"Error: El archivo {ruta_archivo_mat} no contiene la clave 'val'.")
+    except Exception as e:
+        print(f"Ocurrió un error al procesar {ruta_archivo_mat}: {e}")
+
+print("\n=== Generando gráficas de VFC a lo largo del tiempo ===")
+
+tiempo = np.linspace(0, num_archivos_a_procesar * (len(range(num_ventanas)) * duracion_ventana / 3600), len(all_hrv_metrics['mean_RR'])) # Aproximación del tiempo en horas
+
+plt.figure(figsize=(12, 6))
+plt.plot(tiempo, all_hrv_metrics['mean_RR'], label='Media de los Intervalos RR (ms)')
+plt.xlabel('Tiempo (horas)')
+plt.ylabel('Valor')
+plt.title('Evolución de la Media de los Intervalos RR a lo largo del tiempo')
+plt.legend()
+plt.grid(True)
+plt.tight_layout()
+plt.show()
+
+plt.figure(figsize=(12, 6))
+plt.plot(tiempo, all_hrv_metrics['std_RR'], label='Desviación Estándar de los Intervalos RR (SDNN) (ms)')
+plt.xlabel('Tiempo (horas)')
+plt.ylabel('Valor')
+plt.title('Evolución de SDNN a lo largo del tiempo')
+plt.legend()
+plt.grid(True)
+plt.tight_layout()
+plt.show()
+
+plt.figure(figsize=(12, 6))
+plt.plot(tiempo, all_hrv_metrics['rmssd'], label='RMSSD (ms)')
+plt.xlabel('Tiempo (horas)')
+plt.ylabel('Valor')
+plt.title('Evolución de RMSSD a lo largo del tiempo')
+plt.legend()
+plt.grid(True)
+plt.tight_layout()
+plt.show()
+
+# Puedes añadir más gráficas para otras métricas de VFC que hayas almacenado
+
+print("\n--- Gráficas de VFC generadas ---")
