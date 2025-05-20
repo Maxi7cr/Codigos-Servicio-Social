@@ -1,0 +1,105 @@
+import os
+import re
+import numpy as np
+import matplotlib.pyplot as plt
+import scipy.io
+from scipy.signal import find_peaks
+
+# === CONFIGURACIÓN GENERAL ===
+directorio_principal = "C:/Users/maxi-/Desktop/UPIITA/SERVICIO/Descargadedatos/files/i-care/2.0/training/0328"
+num_archivos_a_procesar = 51
+patron_nombre_archivo_mat = re.compile(r".*ECG\.mat$", re.IGNORECASE)  # Solo archivos ECG.mat
+
+# Listar y filtrar los archivos que cumplan el patrón
+archivos_mat = [nombre for nombre in os.listdir(directorio_principal) if patron_nombre_archivo_mat.match(nombre)][:num_archivos_a_procesar]
+
+if not archivos_mat:
+    print(f"No se encontraron archivos ECG .mat en el directorio: {directorio_principal}")
+    exit()
+elif len(archivos_mat) < num_archivos_a_procesar:
+    print(f"Se encontraron {len(archivos_mat)} archivos ECG .mat. Se procesarán estos archivos.")
+else:
+    print(f"Se procesarán los primeros {num_archivos_a_procesar} archivos ECG .mat encontrados.")
+
+# === PARÁMETROS DE MUESTREO Y SEGMENTACIÓN ===
+fs = 250  # Hz
+tiempo_inicio = 750  # segundos
+duracion_ventana = 60  # segundos
+muestras_ventana = int(duracion_ventana * fs)
+muestras_inicio_archivo = int(tiempo_inicio * fs)
+
+# === INICIALIZACIÓN DE RESULTADOS ===
+media_intervalos_RR = []
+desviacion_intervalos_RR = []
+archivos_validos = []
+
+# === PROCESAMIENTO DE CADA ARCHIVO ===
+for nombre_archivo in archivos_mat:
+    try:
+        ruta_completa = os.path.join(directorio_principal, nombre_archivo)
+        mat = scipy.io.loadmat(ruta_completa)
+
+        # Extrae la señal ECG (busca la primera clave válida)
+        ecg_key = [k for k in mat.keys() if not k.startswith("__")][0]
+        ecg = np.ravel(mat[ecg_key])
+
+        # Verifica si hay suficientes muestras
+        if len(ecg) < muestras_inicio_archivo + muestras_ventana:
+            print(f"[⚠️] {nombre_archivo} no tiene suficientes muestras para aplicar la ventana.")
+            continue
+
+        # Extraer ventana
+        ecg_segmento = ecg[muestras_inicio_archivo : muestras_inicio_archivo + muestras_ventana]
+
+        # Normalizar
+        ecg_norm = (ecg_segmento - np.mean(ecg_segmento)) / np.std(ecg_segmento)
+
+        # Detección de picos R
+        picos_R, _ = find_peaks(ecg_norm, distance=int(0.6 * fs), height=0.5)
+
+        # Cálculo de intervalos RR en milisegundos
+        tiempos = picos_R / fs
+        intervalos_RR = np.diff(tiempos) * 1000  # ms
+
+        # Filtro fisiológico
+        rr_validos = intervalos_RR[(intervalos_RR > 300) & (intervalos_RR < 2000)]
+
+        if len(rr_validos) > 0:
+            media_rr = np.mean(rr_validos)
+            std_rr = np.std(rr_validos)
+
+            media_intervalos_RR.append(media_rr)
+            desviacion_intervalos_RR.append(std_rr)
+            archivos_validos.append(nombre_archivo)
+        else:
+            print(f"[❌] Todos los RR de {nombre_archivo} fuera de rango fisiológico.")
+            continue
+
+        # Visualiza si hay valores extremos
+        if np.any(intervalos_RR > 2500):
+            print(f"[🔍] RR sospechosos en {nombre_archivo}, graficando...")
+            plt.figure(figsize=(10, 4))
+            plt.plot(ecg_norm, label='ECG normalizada')
+            plt.plot(picos_R, ecg_norm[picos_R], 'rx', label='Picos R')
+            plt.title(f'RR sospechosos en: {nombre_archivo}')
+            plt.xlabel('Muestras')
+            plt.ylabel('Amplitud')
+            plt.legend()
+            plt.grid(True)
+            plt.tight_layout()
+            plt.show()
+
+    except Exception as e:
+        print(f"[❌] Error al procesar {nombre_archivo}: {e}")
+
+# === VISUALIZACIÓN FINAL ===
+plt.figure(figsize=(12, 5))
+plt.plot(media_intervalos_RR, label='Media RR (ms)', marker='o', color='blue')
+plt.plot(desviacion_intervalos_RR, label='Desviación RR (ms)', marker='x', color='orange')
+plt.title('Media y Desviación Estándar de Intervalos RR (ventana desde 750s)')
+plt.xlabel('Archivo válido')
+plt.ylabel('Milisegundos')
+plt.legend()
+plt.grid(True)
+plt.tight_layout()
+plt.show()
