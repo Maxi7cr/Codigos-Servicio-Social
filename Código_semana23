@@ -1,0 +1,276 @@
+import re
+import os
+import scipy.io
+import numpy as np
+from scipy.signal import butter, filtfilt
+from scipy.fft import fft, fftfreq
+import matplotlib.pyplot as plt
+
+# === GENERAL CONFIGURATION ===
+directorio_principal = "C:/Users/maxi-/Desktop/UPIITA/SERVICIO/Descargadedatos/files/i-care/2.0/training/0328"
+num_archivos_a_procesar = 1  # Processing 24 hours
+patron_nombre_archivo_mat = re.compile(r".*EEG\.mat$", re.IGNORECASE)
+patron_nombre_archivo_hea = re.compile(r".*\.hea$", re.IGNORECASE)
+
+archivos_mat = []
+archivos_hea = {}
+
+for nombre_archivo in os.listdir(directorio_principal):
+    if patron_nombre_archivo_mat.match(nombre_archivo):
+        archivos_mat.append(nombre_archivo)
+    elif patron_nombre_archivo_hea.match(nombre_archivo):
+        nombre_base = os.path.splitext(nombre_archivo)[0]
+        archivos_hea[nombre_base] = os.path.join(directorio_principal, nombre_archivo)
+
+archivos_a_procesar = archivos_mat[:num_archivos_a_procesar]
+
+if not archivos_a_procesar:
+    print(f"No se encontraron archivos EEG .mat en el directorio: {directorio_principal}")
+    exit()
+elif len(archivos_a_procesar) < num_archivos_a_procesar:
+    print(f"Se encontraron {len(archivos_a_procesar)} archivos EEG .mat. Se procesarán estos archivos.")
+else:
+    print(f"Se procesarán los primeros {num_archivos_a_procesar} archivos EEG .mat encontrados.")
+
+# Sampling and segmentation parameters
+fs = 512
+tiempo_inicio_analisis = 300  # seconds
+tiempo_fin_analisis = 3300  # seconds
+muestras_inicio_analisis = int(tiempo_inicio_analisis * fs)
+muestras_fin_analisis = int(tiempo_fin_analisis * fs)
+
+# Number of channels to process
+num_canales = 19
+
+# === BANDPASS FILTER CONFIGURATION ===
+frecuencia_corte_bajo = 1  # Hz
+frecuencia_corte_alto = 30.0  # Hz
+orden_filtro = 4
+
+colores_viridis = plt.cm.viridis(np.linspace(0, 1, num_canales))
+colores_fijos = ['red', 'blue', 'green', 'orange', 'purple', 'brown', 'pink', 'gray', 'olive', 'cyan',
+                 'darkred', 'darkblue', 'darkgreen', 'darkorange', 'darkviolet', 'lightcoral', 'skyblue', 'lime', 'gold']
+
+# Storage for averaged FFT magnitudes
+fft_magnitudes_5min = {canal: [] for canal in range(num_canales)}
+fft_magnitudes_5sec = {canal: [] for canal in range(num_canales)}
+canal_nombres_dict = {}
+
+print("\n=== Processing files and performing FFT analysis ===")
+
+for idx_archivo, archivo_mat in enumerate(archivos_a_procesar):
+    ruta_archivo_mat = os.path.join(directorio_principal, archivo_mat)
+    nombre_base = os.path.splitext(archivo_mat)[0]
+    ruta_archivo_hea = archivos_hea.get(nombre_base)
+    canal_nombres = {}
+
+    # Read .hea file to get channel names (once per file)
+    if ruta_archivo_hea:
+        try:
+            with open(ruta_archivo_hea, 'r') as f:
+                for i, linea in enumerate(f):
+                    if i == 0:
+                        pass # General info, not needed here
+                    elif 0 < i <= num_canales:
+                        partes = linea.split()
+                        if len(partes) > 4:
+                            canal_index = i
+                            canal_nombre = partes[-1].strip()
+                            canal_nombres[canal_index - 1] = canal_nombre
+        except FileNotFoundError:
+            print(f"Warning: .hea file not found: {ruta_archivo_hea}")
+        except Exception as e:
+            print(f"Error reading .hea file {ruta_archivo_hea}: {e}")
+    else:
+        print(f"Warning: .hea file not found for {archivo_mat}")
+
+    canal_nombres_dict[nombre_base] = canal_nombres
+
+    print(f"\n--- Processing file: {archivo_mat} (Hour {idx_archivo + 1}) ---")
+
+    try:
+        data = scipy.io.loadmat(ruta_archivo_mat)
+        eeg = data['val']
+
+        for canal_idx in range(min(num_canales, eeg.shape[0])):
+            canal_original = eeg[canal_idx, :]
+            segmento_analisis = canal_original[muestras_inicio_analisis:muestras_fin_analisis]
+
+            # === APPLY BANDPASS FILTER ===
+            nyquist_frecuencia = 0.5 * fs
+            frecuencia_normalizada_bajo = frecuencia_corte_bajo / nyquist_frecuencia
+            frecuencia_normalizada_alto = frecuencia_corte_alto / nyquist_frecuencia
+            b, a = butter(orden_filtro, [frecuencia_normalizada_bajo, frecuencia_normalizada_alto], btype='band')
+            segmento_filtrado = filtfilt(b, a, segmento_analisis)
+
+            # === FFT ANALYSIS FOR 5-MINUTE WINDOWS ===
+            duracion_ventana_5min = 5 * 60  # 5 minutes in seconds
+            muestras_ventana_5min = int(duracion_ventana_5min * fs)
+            total_muestras_analisis = len(segmento_filtrado)
+            num_ventanas_5min = total_muestras_analisis // muestras_ventana_5min
+
+            if num_ventanas_5min == 0:
+                print(f"Not enough data for 5-minute windows in {archivo_mat} for channel {canal_idx + 1}.")
+                fft_magnitudes_5min[canal_idx].append(np.zeros(250)) # Append zeros or handle appropriately
+            else:
+                all_fft_magnitudes_5min_channel = []
+                for i in range(num_ventanas_5min):
+                    inicio_ventana = i * muestras_ventana_5min
+                    fin_ventana = inicio_ventana + muestras_ventana_5min
+                    ventana_data = segmento_filtrado[inicio_ventana:fin_ventana]
+
+                    N = len(ventana_data)
+                    yf = fft(ventana_data)
+                    xf = fftfreq(N, 1 / fs)
+
+                    # Take only positive frequencies and their magnitudes
+                    positive_freq_mask = xf > 0
+                    xf_positive = xf[positive_freq_mask]
+                    yf_positive = np.abs(yf[positive_freq_mask])
+                    
+                    # Interpolate to a fixed frequency range if necessary, or simply append
+                    if not all_fft_magnitudes_5min_channel: # First window, store frequencies
+                         freqs_5min = xf_positive
+                    all_fft_magnitudes_5min_channel.append(yf_positive)
+                
+                if all_fft_magnitudes_5min_channel:
+                    avg_fft_magnitude_5min = np.mean(all_fft_magnitudes_5min_channel, axis=0)
+                    fft_magnitudes_5min[canal_idx].append(avg_fft_magnitude_5min)
+                else:
+                    fft_magnitudes_5min[canal_idx].append(np.zeros(250)) # Default size
+
+            # === FFT ANALYSIS FOR 5-SECOND WINDOWS (first 5 seconds of each minute) ===
+            duracion_minuto = 60 # seconds
+            muestras_minuto = int(duracion_minuto * fs)
+            duracion_ventana_5sec = 5 # seconds
+            muestras_ventana_5sec = int(duracion_ventana_5sec * fs)
+
+            num_minutos_analisis = total_muestras_analisis // muestras_minuto
+            
+            if num_minutos_analisis == 0:
+                print(f"Not enough data for 5-second windows in {archivo_mat} for channel {canal_idx + 1}.")
+                fft_magnitudes_5sec[canal_idx].append(np.zeros(250)) # Append zeros or handle appropriately
+            else:
+                all_fft_magnitudes_5sec_channel = []
+                for i in range(num_minutos_analisis):
+                    inicio_minuto = i * muestras_minuto
+                    inicio_ventana_5sec = inicio_minuto
+                    fin_ventana_5sec = inicio_ventana_5sec + muestras_ventana_5sec
+                    
+                    if fin_ventana_5sec <= total_muestras_analisis: # Ensure window is within bounds
+                        ventana_data_5sec = segmento_filtrado[inicio_ventana_5sec:fin_ventana_5sec]
+
+                        N_5sec = len(ventana_data_5sec)
+                        yf_5sec = fft(ventana_data_5sec)
+                        xf_5sec = fftfreq(N_5sec, 1 / fs)
+
+                        positive_freq_mask_5sec = xf_5sec > 0
+                        xf_positive_5sec = xf_5sec[positive_freq_mask_5sec]
+                        yf_positive_5sec = np.abs(yf_5sec[positive_freq_mask_5sec])
+
+                        if not all_fft_magnitudes_5sec_channel:
+                            freqs_5sec = xf_positive_5sec
+                        all_fft_magnitudes_5sec_channel.append(yf_positive_5sec)
+                
+                if all_fft_magnitudes_5sec_channel:
+                    avg_fft_magnitude_5sec = np.mean(all_fft_magnitudes_5sec_channel, axis=0)
+                    fft_magnitudes_5sec[canal_idx].append(avg_fft_magnitude_5sec)
+                else:
+                     fft_magnitudes_5sec[canal_idx].append(np.zeros(250)) # Default size
+
+    except FileNotFoundError:
+        print(f"Error: File not found {ruta_archivo_mat}")
+    except KeyError:
+        print(f"Error: File {ruta_archivo_mat} does not contain the 'val' key.")
+    except Exception as e:
+        print(f"An error occurred while processing {ruta_archivo_mat}: {e}")
+
+print("\n=== Generating plots ===")
+
+# === FUNCIÓN DE PROMEDIO MÓVIL ===
+def aplicar_promedio_movil(data, window_size=20):
+    """Aplica un promedio móvil a los datos FFT"""
+    if len(data) < window_size:
+        return data  # No hay suficientes puntos para aplicar el promedio
+    cumsum = np.cumsum(np.insert(data, 0, 0)) 
+    return (cumsum[window_size:] - cumsum[:-window_size]) / window_size
+
+# === FUNCIÓN MODIFICADA PARA GENERAR GRÁFICAS ===
+def generar_figura_fft(fft_data, freqs, canales_a_graficar, fig_num, titulo_sufijo, aplicar_suavizado=False):
+    fig, axes = plt.subplots(nrows=2, ncols=3, figsize=(18, 10), sharex=False, sharey=False)
+    axes = axes.flatten()
+    start_canal = canales_a_graficar[0] + 1
+    end_canal = canales_a_graficar[-1] + 1
+    fig.suptitle(f'FFT Magnitudes over 24 Hours - Channels {start_canal} to {end_canal} ({titulo_sufijo})', fontsize=16)
+
+    for i, canal_idx in enumerate(canales_a_graficar):
+        ax = axes[i]
+        nombres_archivo = list(canal_nombres_dict.keys())[0] if canal_nombres_dict else None
+        nombre_canal = canal_nombres_dict.get(nombres_archivo, {}).get(canal_idx, f"Canal {canal_idx + 1}")
+        
+        if fft_data[canal_idx]:
+            avg_magnitude_across_hours = np.mean(fft_data[canal_idx], axis=0)
+            
+            # Aplicar promedio móvil si se solicita
+            if aplicar_suavizado:
+                avg_magnitude_across_hours = aplicar_promedio_movil(avg_magnitude_across_hours, window_size=5)
+                # Ajustar las frecuencias para que coincidan con los datos suavizados
+                freqs_ajustadas = freqs[:len(avg_magnitude_across_hours)]
+            else:
+                freqs_ajustadas = freqs
+            
+            freq_mask = (freqs_ajustadas >= 0) & (freqs_ajustadas <= frecuencia_corte_alto + 5)
+            ax.plot(freqs_ajustadas[freq_mask], avg_magnitude_across_hours[freq_mask], 
+                    color=colores_fijos[i % len(colores_fijos)], label=nombre_canal)
+            
+            ax.set_title(f'{nombre_canal}')
+            ax.set_xlabel('Frecuencia (Hz)')
+            ax.set_ylabel('Magnitud (|FFT|)')
+            ax.grid(True)
+            ax.legend(fontsize='small', loc='upper right')
+        else:
+            ax.set_title(f'{nombre_canal} (No Data)')
+            ax.set_xlabel('Frecuencia (Hz)')
+            ax.set_ylabel('Magnitud (|FFT|)')
+            ax.grid(True)
+
+    for j in range(len(canales_a_graficar), len(axes)):
+        fig.delaxes(axes[j])
+        
+    fig.tight_layout(rect=[0, 0, 1, 0.96])
+    return fig
+
+# Determine the common frequency range for plotting
+if 'freqs_5min' not in locals() or not isinstance(freqs_5min, np.ndarray):
+    # Fallback: calculate a representative frequency array for a 5-min window
+    N_rep_5min = int(5 * 60 * fs)
+    freqs_5min = fftfreq(N_rep_5min, 1 / fs)
+    freqs_5min = freqs_5min[freqs_5min > 0]
+
+if 'freqs_5sec' not in locals() or not isinstance(freqs_5sec, np.ndarray):
+    # Fallback: calculate a representative frequency array for a 5-sec window
+    N_rep_5sec = int(5 * fs)
+    freqs_5sec = fftfreq(N_rep_5sec, 1 / fs)
+    freqs_5sec = freqs_5sec[freqs_5sec > 0]
+
+# Generate Figure for 5-minute windows (original)
+fig_5min_1 = generar_figura_fft(fft_magnitudes_5min, freqs_5min, range(5), 1, '5-Minute Windows (Original)')
+fig_5min_2 = generar_figura_fft(fft_magnitudes_5min, freqs_5min, range(5, 10), 2, '5-Minute Windows (Original)')
+fig_5min_3 = generar_figura_fft(fft_magnitudes_5min, freqs_5min, range(10, 15), 3, '5-Minute Windows (Original)')
+fig_5min_4 = generar_figura_fft(fft_magnitudes_5min, freqs_5min, range(15, num_canales), 4, '5-Minute Windows (Original)')
+
+# Generate Figure for 5-second windows (original)
+fig_5sec_1 = generar_figura_fft(fft_magnitudes_5sec, freqs_5sec, range(5), 5, '5-Second Windows (First 5s of each minute)')
+fig_5sec_2 = generar_figura_fft(fft_magnitudes_5sec, freqs_5sec, range(5, 10), 6, '5-Second Windows (First 5s of each minute)')
+fig_5sec_3 = generar_figura_fft(fft_magnitudes_5sec, freqs_5sec, range(10, 15), 7, '5-Second Windows (First 5s of each minute)')
+fig_5sec_4 = generar_figura_fft(fft_magnitudes_5sec, freqs_5sec, range(15, num_canales), 8, '5-Second Windows (First 5s of each minute)')
+
+# Generate Figure for 5-minute windows (with moving average)
+fig_5min_suavizado_1 = generar_figura_fft(fft_magnitudes_5min, freqs_5min, range(5), 9, '5-Minute Windows (Smoothed)', aplicar_suavizado=True)
+fig_5min_suavizado_2 = generar_figura_fft(fft_magnitudes_5min, freqs_5min, range(5, 10), 10, '5-Minute Windows (Smoothed)', aplicar_suavizado=True)
+fig_5min_suavizado_3 = generar_figura_fft(fft_magnitudes_5min, freqs_5min, range(10, 15), 11, '5-Minute Windows (Smoothed)', aplicar_suavizado=True)
+fig_5min_suavizado_4 = generar_figura_fft(fft_magnitudes_5min, freqs_5min, range(15, num_canales), 12, '5-Minute Windows (Smoothed)', aplicar_suavizado=True)
+
+plt.show()
+
+print("\n--- Plots generated ---")
